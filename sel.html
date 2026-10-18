@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Piksel Macerası - Platform Oyunu</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101827;color:#fff;font-family:system-ui,Arial,sans-serif;display:flex;justify-content:center;padding:20px}
+main{width:min(100%,900px)}header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+h1{font-size:1.45rem;margin:0}.stats{display:flex;gap:18px;font-weight:700}
+canvas{display:block;width:100%;border:1px solid #52617b;border-radius:12px;background:#142a56;image-rendering:pixelated}
+.controls{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:12px}
+button{border:0;border-radius:10px;padding:14px 12px;background:#34445d;color:white;font-size:1rem;font-weight:700;cursor:pointer;touch-action:none}
+button:active{background:#0891b2}#jump{background:#0e7490}#start{background:#67e8f9;color:#102030;padding:12px 24px}
+.note{font-size:.9rem;color:#cbd5e1;line-height:1.6}.gamewrap{position:relative}.overlay{position:absolute;inset:0;background:#020617d9;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px;border-radius:12px}.overlay h2{margin:0 0 8px}.overlay p{margin:0 0 16px}.hidden{display:none!important}
+</style>
+</head>
+<body>
+<main>
+<header><h1>🏃 Piksel Macerası</h1><div class="stats"><span>🪙 <span id="coins">0</span></span><span>❤️ <span id="lives">3</span></span></div></header>
+<div class="gamewrap">
+<canvas id="game" width="800" height="450" aria-label="Platform oyunu"></canvas>
+<div class="overlay" id="overlay"><div style="font-size:3rem">🎮</div><h2 id="overlayTitle">Macera başlıyor!</h2><p id="overlayText">Altınları topla, engelleri aş ve bayrağa ulaş.</p><button id="start">OYUNA BAŞLA ▶</button></div>
+</div>
+<p class="note" id="status">Gamepad bağlandığında otomatik algılanır.</p>
+<div class="controls"><button id="left" aria-label="Sola git">◀ SOL</button><button id="jump">⬆ ZIPLA</button><button id="right" aria-label="Sağa git">SAĞ ▶</button></div>
+<p class="note">🎮 Gamepad: sol analog / yön tuşları ile hareket, A veya ✕ ile zıpla. Klavye: ← → hareket, Space veya ↑ zıpla, Esc duraklat. Telefon/tablet: ekrandaki tuşları kullan.</p>
+<button id="restart">↻ Yeniden başlat</button>
+</main>
+<script>
+(() => {
+const $=id=>document.getElementById(id),canvas=$('game'),ctx=canvas.getContext('2d');
+const W=800,H=450;
+let player,platforms,coins,hazards,goal,cam,score,lives,running=false,finished=false,last=0,held={},touch={},prevJump=false,raf=0;
+function level(){
+ const mapNo=(window.__pixelMapNo||0)+1; window.__pixelMapNo=mapNo;
+ const rand=(()=>{let s=(mapNo*7919+12345)>>>0;return()=>{s=(s*1664525+1013904223)>>>0;return s/4294967296}})();
+ player={x:48,y:350,w:27,h:34,vx:0,vy:0,ground:false,inv:0};
+ platforms=[{x:0,y:405,w:205,h:45}]; coins=[]; hazards=[];
+ let x=220;
+ while(x<1690){
+   const gap=30+Math.floor(rand()*42), w=78+Math.floor(rand()*78);
+   let y=285+Math.floor(rand()*105);
+   if(x<300)y=365;
+   const p={x:x+gap,y,w,h:450-y}; platforms.push(p);
+   if(rand()>.18)coins.push({x:p.x+Math.max(18,w*.35),y:p.y-29,taken:false});
+   if(rand()>.5)coins.push({x:p.x+Math.max(35,w*.7),y:p.y-29,taken:false});
+   if(rand()>.64&&w>95)hazards.push({x:p.x+w*.65,y:p.y-19,w:22,h:19});
+   x+=gap+w+18+Math.floor(rand()*24);
+ }
+ platforms.push({x:1720,y:335,w:180,h:115});
+ for(let i=0;i<4;i++){const p=platforms[1+Math.floor(rand()*(platforms.length-2))];coins.push({x:p.x+20+rand()*Math.max(15,p.w-40),y:p.y-30,taken:false})}
+ goal={x:1838,y:270,w:20,h:65};cam=0;score=0;lives=3;running=false;finished=false;dead=false;held={};touch={};prevJump=false;
+ updateHUD();draw();
+}
+function updateHUD(){$('coins').textContent=score;$('lives').textContent=lives}
+function showOverlay(title,text,button){$('overlayTitle').textContent=title;$('overlayText').textContent=text;$('start').textContent=button;$('overlay').classList.remove('hidden')}
+function start(){if(finished||lives<=0)level();running=true;$('overlay').classList.add('hidden');last=performance.now();cancelAnimationFrame(raf);raf=requestAnimationFrame(loop)}
+function rect(x,y,w,h,c){ctx.fillStyle=c;ctx.fillRect(Math.round(x),Math.round(y),w,h)}
+function draw(){
+ ctx.clearRect(0,0,W,H);let sky=ctx.createLinearGradient(0,0,0,H);sky.addColorStop(0,'#142a56');sky.addColorStop(1,'#58b7c8');ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+ for(let i=0;i<12;i++){let x=((i*113-cam*.18)%1000+1000)%1000;rect(x,70+(i%4)*28,45,9,'#d5f4ed');rect(x+12,60+(i%4)*28,22,12,'#d5f4ed')}
+ for(let i=0;i<8;i++){let x=((i*170-cam*.35)%1000+1000)%1000;rect(x,315,100,90,'#32677a');rect(x+25,285,55,30,'#32677a')}
+ ctx.save();ctx.translate(-cam,0);
+ for(const p of platforms){rect(p.x,p.y,p.w,p.h,'#644d7c');rect(p.x,p.y,p.w,9,'#67e8a5');for(let xx=p.x+8;xx<p.x+p.w;xx+=24)rect(xx,p.y+18,12,4,'#8e75a5')}
+ for(const c of coins){if(c.taken)continue;let bob=Math.sin(performance.now()/180+c.x)*3;ctx.fillStyle='#ffd84d';ctx.beginPath();ctx.ellipse(c.x,c.y+bob,8,11,0,0,Math.PI*2);ctx.fill();rect(c.x-2,c.y-6+bob,4,12,'#fff0a0')}
+ for(const h of hazards){rect(h.x,h.y+8,h.w,h.h-8,'#e84c62');ctx.fillStyle='#ff9a8c';ctx.beginPath();ctx.moveTo(h.x,h.y+8);ctx.lineTo(h.x+h.w/2,h.y-7);ctx.lineTo(h.x+h.w,h.y+8);ctx.fill()}
+ rect(goal.x,goal.y,5,goal.h,'#f1f5f9');rect(goal.x+5,goal.y,37,23,'#ffcb4b');rect(goal.x+5,goal.y+23,25,8,'#ef6579');
+ rect(player.x+5,player.y,18,10,'#f6c8a3');rect(player.x+3,player.y+9,22,15,'#4ee4df');rect(player.x+1,player.y+11,6,13,'#2cb2c3');rect(player.x+7,player.y+3,3,3,'#15263f');rect(player.x+18,player.y+3,3,3,'#15263f');rect(player.x+5,player.y+23,7,10,'#ffca58');rect(player.x+17,player.y+23,7,10,'#ffca58');rect(player.x-3,player.y+12,5,5,'#f6c8a3');
+ ctx.restore();
+}
+function overlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y}
+function loop(now){
+ if(!running)return;let dt=Math.min((now-last)/16.667,2);last=now;
+ const pads=navigator.getGamepads?navigator.getGamepads():[],pad=Array.from(pads).find(p=>p&&p.connected);
+ let left=!!(held.ArrowLeft||held.KeyA||touch.left),right=!!(held.ArrowRight||held.KeyD||touch.right),jump=!!(held.Space||held.ArrowUp||held.KeyW||held.KeyZ||touch.jump);
+ if(pad){const ax=pad.axes[0]||0;left=left||ax<-.3||!!pad.buttons[14]?.pressed;right=right||ax>.3||!!pad.buttons[15]?.pressed;jump=jump||!!pad.buttons[0]?.pressed||!!pad.buttons[1]?.pressed||!!pad.buttons[12]?.pressed;$('status').textContent='🎮 Bağlı gamepad: '+pad.id}
+ else $('status').textContent='Gamepad bağlandığında otomatik algılanır.';
+ if(held.Escape){held.Escape=false;running=false;showOverlay('Duraklatıldı','Devam etmek için butona bas.','DEVAM ▶');return}
+ player.vx=(right?3.5:0)-(left?3.5:0);player.x=Math.max(0,Math.min(1880-player.w,player.x+player.vx*dt));
+ if(jump&&!prevJump&&player.ground){player.vy=-10.7;player.ground=false}prevJump=jump;
+ player.vy=Math.min(12,player.vy+.48*dt);let oldY=player.y;player.y+=player.vy*dt;player.ground=false;
+ for(const p of platforms){if(player.x+player.w>p.x&&player.x<p.x+p.w&&oldY+player.h<=p.y+3&&player.y+player.h>=p.y&&player.vy>=0){player.y=p.y-player.h;player.vy=0;player.ground=true}}
+ for(const c of coins){if(!c.taken&&overlap(player,{x:c.x-9,y:c.y-11,w:18,h:22})){c.taken=true;score++;updateHUD()}}
+ if(player.inv>0)player.inv-=dt;
+ for(const h of hazards){if(overlap(player,h)&&player.inv<=0){lives--;player.inv=70;player.vy=-6;player.x=Math.max(0,player.x-35);updateHUD();if(lives<=0){running=false;showOverlay('Oyun bitti!','Topladığın altın: '+score+'. Yeniden dene!','TEKRAR OYNA');return}}}
+ if(player.y>H+70){lives--;updateHUD();if(lives<=0){running=false;showOverlay('Oyun bitti!','Topladığın altın: '+score+'. Yeniden dene!','TEKRAR OYNA');return}player.x=48;player.y=350;player.vy=0}
+ if(overlap(player,goal)){running=false;finished=true;showOverlay('Bölüm tamamlandı! 🏆','Tebrikler! '+score+' altın topladın.','YENİDEN OYNA');draw();return}
+ cam=Math.max(0,Math.min(1100,player.x-250));draw();raf=requestAnimationFrame(loop);
+}
+$('start').addEventListener('click',start);$('restart').addEventListener('click',()=>{cancelAnimationFrame(raf);level();start()});
+function bind(id,key){const b=$(id),down=e=>{e.preventDefault();touch[key]=true},up=e=>{e.preventDefault();touch[key]=false};b.addEventListener('pointerdown',down);b.addEventListener('pointerup',up);b.addEventListener('pointerleave',up);b.addEventListener('pointercancel',up)}
+bind('left','left');bind('right','right');bind('jump','jump');
+window.addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','ArrowUp','Space'].includes(e.code))e.preventDefault();held[e.code]=true;if(e.code==='Enter'&&!running)start()});
+window.addEventListener('keyup',e=>held[e.code]=false);
+window.addEventListener('gamepadconnected',e=>$('status').textContent='🎮 Gamepad hazır: '+e.gamepad.id);
+window.addEventListener('gamepaddisconnected',()=>$('status').textContent='Gamepad bağlantısı kesildi.');
+level();
+})();
+</script>
+</body>
+</html>
